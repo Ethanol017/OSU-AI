@@ -12,10 +12,9 @@ class OSU_Env(gym.Env):
 
     def __init__(self, **kwargs):
         self.human_play_test = kwargs.get("human_play_test", False)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(
-            72, 128), dtype=np.float32)  # 1440 * 2560 / 20
-        self.action_space = spaces.Dict({"move_action": spaces.Box(
-            low=-1, high=1, shape=(2,)), "z_action": spaces.Discrete(2), "x_action": spaces.Discrete(2)})
+        self.observation_space = spaces.Box(low=0, high=1, shape=(72, 128), dtype=np.float32)  # 1440 * 2560 / 20
+        self.action_space = spaces.Dict({"move_action": spaces.Box(low=-1, high=1, shape=(2,)), 
+                                         "click_action": spaces.Discrete(2)})
 
         self.z_action_down = False
         self.x_action_down = False
@@ -129,8 +128,8 @@ class OSU_Env(gym.Env):
         # Action  ( 1 move : ~4ms )
         if self.human_play_test == False:
             move_action = action["move_action"]
-            z_action = action["z_action"]
-            x_action = action["x_action"]
+            z_action = action["click_action"]
+            # x_action = action["x_action"]
             # Key
             if self.z_action_down != z_action:
                 if z_action:
@@ -138,12 +137,12 @@ class OSU_Env(gym.Env):
                 else:
                     subprocess.run(['xdotool', 'keyup', 'z'])
                 self.z_action_down = z_action
-            if self.x_action_down != x_action:
-                if x_action:
-                    subprocess.run(['xdotool', 'keydown', 'x'])
-                else:
-                    subprocess.run(['xdotool', 'keyup', 'x'])
-                self.x_action_down = x_action
+            # if self.x_action_down != x_action:
+            #     if x_action:
+            #         subprocess.run(['xdotool', 'keydown', 'x'])
+            #     else:
+            #         subprocess.run(['xdotool', 'keyup', 'x'])
+            #     self.x_action_down = x_action
             # Mouse
             subprocess.run(['xdotool', 'mousemove_relative', '--',
                            f'{move_action[0] * 2560}', f'{move_action[1] * 1440}'])
