@@ -18,7 +18,7 @@ class OSU_Env(gym.Env):
 
         self.z_action_down = False
         self.x_action_down = False
-        self.data_previous = {}
+        self.step_dates = []
 
     def _get_obs(self):
         with mss.mss() as sct:
@@ -57,6 +57,7 @@ class OSU_Env(gym.Env):
             "full_time": data["menu"]["bm"]["time"]["full"],
             "first_time": data["menu"]["bm"]["time"]["firstObj"],
             "songover_time": data["menu"]["bm"]["time"]["mp3"],
+            "score": gameplay["score"]["current"],
         }
 
         return data
@@ -116,15 +117,17 @@ class OSU_Env(gym.Env):
                 subprocess.run(['xdotool', 'key', 'Enter'])
 
         time.sleep(1) # wait for game start cutscene
+        data = self._get_data()
         if auto_wait_first:
-            data = self._get_data()
             time.sleep(max(0 , ((data["first_time"]/1000)-1) ))
         else:  # human skip
             time.sleep(2)
+        self.step_dates.clear()
+        self.step_dates.append(data)
         observation = self._get_obs()
         return observation, {}
 
-    def step(self, action):
+    def step(self, action,step_count):
         # Action  ( 1 move : ~4ms )
         if self.human_play_test == False:
             move_action = action["move_action"]
@@ -150,39 +153,24 @@ class OSU_Env(gym.Env):
         # Get_Observation & Get_Data
         observation = self._get_obs()  # 40ms
         data = self._get_data()  # 11ms
-
+        self.step_dates.append(data)
+        data_previous = self.step_dates[step_count-1]
+        diff = self._get_different_data(data, data_previous)
+        
         # Check_Over & reward
+        SCORCE = 0.01 # mutiply score
+        GAMEOVER = -250
+        WIN = 1000
         reward = 0
         terminated = False
         truncated = False
+        reward += diff["score"] * SCORCE
         if data["hp"] == 0:  # game over
             truncated = True
-            reward -= 250
+            reward -= GAMEOVER
         elif data["current_time"] >= data["full_time"]:  # win
             terminated = True
-            reward += 1000
-        else:
-            pass  # continum
-
-        if self.data_previous == {}:
-            self.data_previous = data
-        different_data = self._get_different_data(data, self.data_previous)
-        if different_data["300"] > 0:
-            reward += 30
-        elif different_data["geki"] > 0:
-            reward += 32
-        elif different_data["100"] > 0:
-            reward += 10
-        elif different_data["katu"] > 0:
-            reward += 12
-        elif different_data["50"] > 0:
-            reward += 5
-        elif different_data["0"] > 0:
-            reward -= 50
-
-        if different_data["combo"] > 0:
-            reward += different_data["combo"] * 0.1
-
+            reward += WIN
         # Other
         self.data_previous = data
 
