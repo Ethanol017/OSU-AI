@@ -5,7 +5,7 @@ import models
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-
+from torch.utils.tensorboard import SummaryWriter
 import collections, random
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -90,7 +90,7 @@ def train(config):
         alpha_cont = torch.Tensor(config["alpha_cont"]).to(device)
         alpha_disc = torch.Tensor(config["alpha_disc"]).to(device)
     
-    
+    summary_writer = SummaryWriter(config["log_dir"])
     
     for episode in range(1,config["num_episodes"]):
         state,_ = env.reset()
@@ -114,7 +114,7 @@ def train(config):
             if done:
                 break
         if replay_buffer.size() >= config["batch_size"]:
-            for update in range(config["update_pre_episode"]):
+            for update_num in range(config["update_pre_episode"]):
                 b_state, b_action, b_reward, b_state_next, b_dones = replay_buffer.sample(config["batch_size"])
                 # update critic
                 with torch.no_grad(): # target value (next state)
@@ -134,7 +134,7 @@ def train(config):
                 critic_loss.backward()
                 values_optimizer.step()
 
-                if update % config["update_actor_freq"] == 0:
+                if update_num % config["update_actor_freq"] == 0:
                     for _ in range(config["update_actor_freq"]): 
                         # update actor
                         _ , _ ,cont_log_pi_prob, disc_log_pi_prob = actor.get_action(state_tensor)
@@ -161,11 +161,23 @@ def train(config):
                             alpha_cont = log_alpha_cont.exp().detach()
                             alpha_disc = log_alpha_disc.exp().detach()
                 
-                if update % config["update_target_freq"] == 0:
+                if update_num % config["update_target_freq"] == 0:
                     for param, target_param in zip(critic1.parameters(), critic1_target.parameters()):
                         target_param.data.copy_(config["tau"] * param.data + (1 - config["tau"]) * target_param.data)
                     for param, target_param in zip(critic2.parameters(), critic2_target.parameters()):
                         target_param.data.copy_(config["tau"] * param.data + (1 - config["tau"]) * target_param.data)
+
+                if update_num % config["log_freq"] == 0:
+                    summary_writer.add_scalar("Loss/Critic1", critic1_loss.item(), episode)
+                    summary_writer.add_scalar("Loss/Critic2", critic2_loss.item(), episode)
+                    summary_writer.add_scalar("Loss/Critic_mean", critic_loss.item(), episode)
+                    summary_writer.add_scalar("Loss/Actor", actor_loss.item(), episode)
+                    if config["alpha_autotune"]:
+                        summary_writer.add_scalar("Loss/Alpha_Cont", alpha_cont_loss.item(), episode)
+                        summary_writer.add_scalar("Loss/Alpha_Disc", alpha_disc_loss.item(), episode)
+                        summary_writer.add_scalar("Alpha/Cont", alpha_cont.item(), episode)
+                        summary_writer.add_scalar("Alpha/Disc", alpha_disc.item(), episode)
+        
         if episode % config["save_freq"] == 0:
             torch.save({
                 "actor": actor.state_dict(),
@@ -180,6 +192,9 @@ def train(config):
                 "alpha_cont_optimizer": alpha_cont_optimizer.state_dict(),
                 "alpha_disc_optimizer": alpha_disc_optimizer.state_dict(),
             }, f"{config['save_folder']}episode_{episode}.pth")
+            
+        # summary_writer.add_scalar("Episode/Reward", episode_reward, episode)
+        
 if __name__ == "__main__":
     config = {
         "num_episodes": 100,
@@ -205,5 +220,7 @@ if __name__ == "__main__":
         "save_folder": "models/",
         "load_model": False,
         "load_path": "models/episode_100.pth",
+        "log_dir": "runs/",
+        "log_freq": 10,
     }
     train(config)
