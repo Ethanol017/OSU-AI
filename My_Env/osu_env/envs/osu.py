@@ -12,13 +12,14 @@ class OSU_Env(gym.Env):
 
     def __init__(self, **kwargs):
         self.human_play_test = kwargs.get("human_play_test", False)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(72, 128), dtype=np.float32)  # 1440 * 2560 / 20
+        self.observation_space = spaces.Box(low=0, high=1, shape=(1, 72, 128), dtype=np.float32)  # 1440 * 2560 / 20
         self.action_space = spaces.Dict({"move_action": spaces.Box(low=-1, high=1, shape=(2,)), 
                                          "click_action": spaces.Discrete(2)})
 
-        self.z_action_down = False
-        self.x_action_down = False
+        self.z_action_down = 0
+        self.x_action_down = 0
         self.step_dates = []
+        self.step_count = 0
 
     def _get_obs(self):
         with mss.mss() as sct:
@@ -31,11 +32,12 @@ class OSU_Env(gym.Env):
             image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
             # show to human
-            # _, binary_image = cv2.threshold(resized_img, 80, 255, cv2.THRESH_BINARY)
-            # show_image = cv2.resize(resized_img, None, fx=5, fy=5, interpolation=cv2.INTER_NEAREST)
+            # _, binary_image = cv2.threshold(image, 80, 255, cv2.THRESH_BINARY)
+            # show_image = cv2.resize(image, None, fx=5, fy=5, interpolation=cv2.INTER_NEAREST)
             # cv2.imshow("Grayscale Screen", show_image)
 
-            image_np = image.astype('float32') / 255.0  # 將像素值縮放到 [0, 1]
+            image_np = image.astype('float32') / 255.0 # normalize to [0, 1]
+            image_np = np.expand_dims(image_np, axis=0)
             return image_np
 
     def _get_data(self):
@@ -57,7 +59,7 @@ class OSU_Env(gym.Env):
             "full_time": data["menu"]["bm"]["time"]["full"],
             "first_time": data["menu"]["bm"]["time"]["firstObj"],
             "songover_time": data["menu"]["bm"]["time"]["mp3"],
-            "score": gameplay["score"]["current"],
+            "score": gameplay["score"],
         }
 
         return data
@@ -81,6 +83,10 @@ class OSU_Env(gym.Env):
         """
         super().reset(seed=seed, options=options)
         
+        self.step_count = 0
+        self.z_action_down = 0
+        self.x_action_down = 0
+        
         options = options or {}
         start = options.get("start", False)
         iswin = options.get("win", False)
@@ -98,10 +104,8 @@ class OSU_Env(gym.Env):
             if iswin:
                 data = self._get_data()
                 time.sleep((data["songover_time"] - data["full_time"])/1000)
-            else:
-                time.sleep(3)
+            time.sleep(3) # wait to show end menu 
             # start movement
-            subprocess.run(['xdotool', 'mousemove', f'{2560/2}',f'{1440/2}'])
             if retry:
                 if iswin:
                     subprocess.run(['xdotool', 'key', 'Escape'])
@@ -117,6 +121,7 @@ class OSU_Env(gym.Env):
                 subprocess.run(['xdotool', 'key', 'Enter'])
 
         time.sleep(1) # wait for game start cutscene
+        subprocess.run(['xdotool', 'mousemove', f'{2560/2}',f'{1440/2}'])
         data = self._get_data()
         if auto_wait_first:
             time.sleep(max(0 , ((data["first_time"]/1000)-1) ))
@@ -127,8 +132,9 @@ class OSU_Env(gym.Env):
         observation = self._get_obs()
         return observation, {}
 
-    def step(self, action,step_count):
+    def step(self, action):
         # Action  ( 1 move : ~4ms )
+        MOVE_SPEED = 0.2 #  [0,1] x (2560,1440) x MOVE_SPEED
         if self.human_play_test == False:
             move_action = action["move_action"]
             z_action = action["click_action"]
@@ -148,13 +154,16 @@ class OSU_Env(gym.Env):
             #     self.x_action_down = x_action
             # Mouse
             subprocess.run(['xdotool', 'mousemove_relative', '--',
-                           f'{move_action[0] * 2560}', f'{move_action[1] * 1440}'])
+                           f'{move_action[0] * 2560 * MOVE_SPEED}', f'{move_action[1] * 1440 * MOVE_SPEED}'])
 
         # Get_Observation & Get_Data
         observation = self._get_obs()  # 40ms
         data = self._get_data()  # 11ms
         self.step_dates.append(data)
-        data_previous = self.step_dates[step_count-1]
+        if self.step_count != 0:
+            data_previous = self.step_dates[self.step_count-1]
+        else:
+            data_previous = data
         diff = self._get_different_data(data, data_previous)
         
         # Check_Over & reward
@@ -167,14 +176,13 @@ class OSU_Env(gym.Env):
         reward += diff["score"] * SCORCE
         if data["hp"] == 0:  # game over
             truncated = True
-            reward -= GAMEOVER
+            reward += GAMEOVER
         elif data["current_time"] >= data["full_time"]:  # win
             terminated = True
             reward += WIN
         # Other
-        self.data_previous = data
-
-        return observation, reward, terminated, truncated, {}
+        self.step_count += 1
+        return observation, reward, terminated, truncated, {"step_count":self.step_count}
 
     def render(self):
         pass
